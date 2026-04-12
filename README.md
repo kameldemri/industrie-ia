@@ -1,146 +1,120 @@
 # INDUSTRIE IA — Multi-Agent Manufacturing Pipeline
 
-> 🚧 **Status:** Phase 1 — Infrastructure, Orchestration & LLM Routing
-> 🔜 **Next:** Module 1 (PDF Specification Extraction)
-> 📄 *This README is a living technical document. It will be updated as each pipeline module is implemented.*
+> 🚧 **Status:** Phase 1 — Infrastructure, Orchestration & Module Scaffolding
+> 📅 **Timeline:** Bootcamp 2026 | Day 13+
+> 📄 *Living document. Updated as modules M1→M9 are implemented and integrated.*
 
 ---
 
-## 🎯 Project Mission
-**INDUSTRIE IA** automates the transformation of public technical PDFs (e.g., industrial valve blueprints) into complete, audit-ready manufacturing dossiers. Built exclusively with open-source tools and public APIs, the pipeline extracts specifications, generates CAD assets, sources suppliers, calculates Total Cost of Ownership (TCO), produces business plans, and exports multi-format catalogs.
+## 🎯 Mission
+**INDUSTRIE IA** automates the transformation of public technical PDFs (e.g., industrial valve blueprints from GrabCAD) into complete, audit-ready manufacturing dossiers. The pipeline extracts specifications, generates CAD assets, sources suppliers, calculates Total Cost of Ownership (TCO), produces business plans, and exports multi-format catalogs—**exclusively using open-source tools and public APIs**.
 
-This phase establishes the **production-ready foundation**: Dockerized cross-platform deployment, LangGraph state orchestration, FastAPI gateway, and a provider-agnostic LLM routing layer.
+Built for Algerian SMEs, it eliminates licensing fees, vendor lock-in, and manual engineering bottlenecks.
 
 ---
 
 ## 🏗️ Architecture Overview
 
 ### 📦 Container Topology
-| Container | Role | Network Exposure | Persistence Model |
-|-----------|------|------------------|-------------------|
-| `app` | FastAPI backend + LangGraph orchestration + Python logic | `localhost:8000` | Code via host mount, outputs via `./outputs/` |
-| `ollama` | Local LLM inference engine (Mistral/Qwen/Llama) | `localhost:11434` | Models via Docker named volume |
+| Container | Role | Network Exposure | Persistence |
+|-----------|------|------------------|-------------|
+| `app` | FastAPI backend + LangGraph state machine + Python logic | `localhost:8000` | Host mount (`.`), outputs via `./outputs/` |
+| `ollama` | Local LLM inference (Mistral/Qwen/Llama) | `localhost:11434` | Named Docker volume (`ollama_models`) |
 
-**Internal Networking:** Docker Compose provisions an isolated bridge network (`industrie-ia_default`). Containers resolve each other by service hostname (`http://ollama:11434`), eliminating manual IP configuration or `localhost` routing.
+**Internal Routing:** Docker Compose provisions an isolated bridge network. Containers resolve each other by service name (`http://ollama:11434`), eliminating manual IP configuration.
 
-### 🔄 State & Workflow Design
+### 🔄 Workflow Design
 ```
 PDF Upload → FastAPI → LangGraph StateMachine → PipelineState (TypedDict)
    ↓
-M1 (Pending) → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9
+M1 → M4 → M6 → M7 → M9 (Critical Path)
    ↓
 Outputs saved to ./outputs/ → Multi-format catalog export
 ```
-- **LangGraph** enforces deterministic execution order, manages shared state, handles node failures, and supports checkpointing for crash recovery.
-- **`PipelineState`** is a strictly typed schema that guarantees data consistency across all modules. Every node reads from and writes to this shared state object.
-- **`app/llm.py`** abstracts LLM communication. Switching between local Ollama and external APIs requires zero code changes—only `.env` variables.
+- **LangGraph** enforces execution order, manages shared state, handles failures, and supports checkpointing.
+- **`PipelineState`** is a strictly typed schema guaranteeing data consistency across all modules.
+- **`app/llm.py`** abstracts LLM communication. Switching providers requires only `.env` changes.
 
 ---
 
-## 📁 Directory Structure & Component Roles
+## 📁 Directory Structure
 
 ```
 industrie-ia/
 ├── app/
-│   ├── __init__.py               # Marks 'app' as a valid Python import package
-│   ├── main.py                   # FastAPI entrypoint: health checks, CORS, pipeline trigger routing
-│   ├── graph.py                  # LangGraph compilation, state machine initialization, checkpointer wiring
-│   ├── state.py                  # PipelineState TypedDict: strict schema for cross-module data flow
-│   ├── llm.py                    # Provider-agnostic LLM router (Ollama ↔ OpenRouter/Groq/Any OpenAI-compatible API)
-│   └── nodes/                    # Module implementations (M1 extraction logic pending)
-│       └── __init__.py
-├── tests/                        # Pytest suite targeting M1, M4, M6, M7 (60% coverage requirement)
-├── outputs/                      # Host-mapped directory for generated artifacts (CAD, PDFs, Excel, logs)
-├── data/                         # Persistent storage for future SQLite/Postgres checkpoints
-├── .env                          # Runtime configuration (API endpoints, model selection, environment flags)
-├── .env.example                  # Template for team onboarding and CI/CD
-├── .gitignore                    # Excludes secrets, caches, build artifacts, and ephemeral directories
-├── Dockerfile                    # App container definition: Python 3.11-slim-bookworm + system dependencies
-├── docker-compose.yml            # Multi-service orchestration, volume mapping, resource allocation
+│   ├── __init__.py               # Python package marker
+│   ├── main.py                   # FastAPI entrypoint: /health, /trigger, CORS
+│   ├── graph.py                  # LangGraph compilation & state machine wiring
+│   ├── state.py                  # PipelineState TypedDict: shared data contract
+│   ├── llm.py                    # Provider-agnostic LLM router (Ollama ↔ External APIs)
+│   └── nodes/                    # Module implementations (M1–M9)
+│       ├── __init__.py
+│       ├── m1/node.py            # extract_specs(state) → dict
+│       ├── m2/node.py            # generate_cad(state) → dict
+│       ├── m3/node.py            # generate_video(state) → dict
+│       ├── m4/node.py            # source_suppliers(state) → dict
+│       ├── m5/node.py            # simulate_negotiation(state) → dict
+│       ├── m6/node.py            # calculate_tco(state) → dict
+│       ├── m7/node.py            # generate_business_plan(state) → dict
+│       ├── m8/node.py            # simulate_digital_twin(state) → dict
+│       └── m9/node.py            # export_catalog(state) → dict
+├── tests/                        # Pytest suite (60% coverage target: M1, M4, M6, M7)
+│   ├── test_m1.py ... test_m9.py
+├── outputs/                      # Generated artifacts (CAD, PDFs, Excel, logs)
+├── data/                         # Persistent state (SQLite when enabled)
+├── .env                          # Runtime config (NEVER commit)
+├── .env.example                  # Template for onboarding (SAFE to commit)
+├── .gitignore                    # Excludes secrets, caches, build artifacts
+├── Dockerfile                    # App container: Python 3.11 + system deps
+├── docker-compose.yml            # Multi-service orchestration
 └── README.md                     # This document
 ```
 
 ---
 
-## 🌍 Cross-Platform Setup & First-Run Guide
+## 🌍 Cross-Platform Setup
 
 ### ✅ Prerequisites
 | Component | Linux | Windows | macOS |
 |-----------|-------|---------|-------|
-| **Container Runtime** | Docker Engine + Compose plugin (`sudo apt install docker.io docker-compose-plugin`) | Docker Desktop + WSL2 backend enabled (Settings → Resources) | Docker Desktop (Apple Silicon or Intel) |
-| **Version Control** | Git (`sudo apt install git`) | Git for Windows (use Git Bash or PowerShell) | `brew install git` or Xcode CLI |
-| **Disk Space** | ~5 GB (4 GB Ollama models, ~1 GB Python environment) | Same | Same |
-| **GPU (Optional)** | NVIDIA driver + [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) | Docker Desktop + WSL2 + latest NVIDIA drivers | CPU-only (Ollama auto-fallback) |
+| **Container Runtime** | Docker Engine + Compose plugin | Docker Desktop + WSL2 | Docker Desktop |
+| **Version Control** | Git | Git for Windows (Bash/PowerShell) | `brew install git` |
+| **Disk Space** | ~5 GB | ~5 GB | ~5 GB |
+| **GPU (Optional)** | NVIDIA + Container Toolkit | Docker Desktop + NVIDIA drivers | CPU-only fallback |
 
-> 💡 **Note:** No host Python, `pip`, `venv`, or system libraries are required. All dependencies run inside isolated containers.
+> 💡 No host Python, `pip`, or system libraries required. Everything runs inside containers.
 
-### 🚀 Step-by-Step First Run
+### 🚀 First Run
+```bash
+# 1. Clone
+git clone https://github.com/kameldemri/industrie-ia && cd industrie-ia
 
-1. **Clone Repository**
-   ```bash
-   git clone <your-repo-url> && cd industrie-ia
-   ```
+# 2. Configure
+cp .env.example .env
 
-2. **Initialize Configuration**
-   ```bash
-   cp .env.example .env
-   ```
+# 3. Pull & build
+docker compose pull
+docker compose up -d --build
 
-3. **Pull Base Images**
-   Isolates the ~4 GB Ollama image download before building the Python layer.
-   ```bash
-   docker compose pull
-   ```
-
-4. **Build & Launch Services**
-   ```bash
-   docker compose up -d --build
-   ```
-
-5. **Verify Deployment**
-   ```bash
-   # Linux / macOS / Git Bash:
-   curl http://localhost:8000/health
-
-   # Windows PowerShell:
-   Invoke-WebRequest -Uri http://localhost:8000/health | Select-Object -ExpandProperty Content
-   ```
-   ✅ **Expected Response:** `{"status":"ok","service":"industrie-ia","db":"memory"}`
-
----
-
-## 🔄 Runtime Management & Daily Workflow
-
-| Operation | Command | Behavior |
-|-----------|---------|----------|
-| **Start services** | `docker compose up -d` | Reuses cached images & volumes. ~5s startup. |
-| **Safe shutdown** | `docker compose down` | Stops & removes containers. Preserves models, code, outputs. |
-| **Pause/Resume** | `docker compose stop` / `start` | Keeps RAM state. Ideal for short breaks. |
-| **Apply `.env` changes** | `docker compose restart app` | No rebuild required. Variables load at runtime. |
-| **View live logs** | `docker compose logs -f app` | Real-time FastAPI, LangGraph, and LLM routing output. |
-| **Rebuild after dependency changes** | `docker compose build app && docker compose up -d` | Detects `requirements.txt` or `Dockerfile` modifications. ~15–30s. |
-
-⚠️ **Never Execute:**
-- `docker compose down -v` → Deletes named volumes (erases Ollama models & persistent state)
-- `docker system prune -f` → Forces full redownload of base images and build layers
-
-🔁 **After System Reboot / PC Shutdown:**
-Navigate to project directory → `docker compose up -d` → Wait 5 seconds → Verify with `curl`. Zero redownloads. All models and code persist automatically.
+# 4. Verify
+curl http://localhost:8000/health
+# Expected: {"status":"ok","service":"industrie-ia","db":"memory"}
+```
 
 ---
 
 ## 🌐 LLM Configuration (Provider-Agnostic)
 
-The pipeline routes all AI requests through `app/llm.py`. Switching providers requires only updating `.env`. No code modifications are needed.
+Edit `.env` to switch providers. Zero code changes required.
 
-### 🔹 Default: Local Ollama (CPU)
+### 🔹 Local Ollama (Default)
 ```env
 LLM_BASE_URL=http://ollama:11434/v1
 LLM_API_KEY=unused
 LLM_MODEL_NAME=mistral
 ```
 
-### 🔸 Recommended: Free External API (Qwen via OpenRouter)
+### 🔸 Free External API (Qwen via OpenRouter)
 ```env
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_API_KEY=sk-or-v1-YOUR_KEY_HERE
@@ -148,70 +122,73 @@ LLM_MODEL_NAME=qwen/qwen-2.5-7b-instruct:free
 ```
 Apply: `docker compose restart app`
 
-### 🔥 NVIDIA GPU Acceleration (Linux / Windows)
-1. Uncomment the `deploy.resources...` block under the `ollama` service in `docker-compose.yml`
-2. Ensure NVIDIA drivers and Container Toolkit are installed on the host
+### 🔥 NVIDIA GPU (Linux/Windows)
+1. Uncomment `deploy.resources...` block under `ollama` in `docker-compose.yml`
+2. Install NVIDIA Container Toolkit (Linux) or enable WSL2 GPU support (Windows)
 3. `docker compose up -d`
-4. If GPU is unavailable or misconfigured, Ollama gracefully falls back to CPU inference. No container crashes.
+4. Fallback: If GPU unavailable, Ollama auto-switches to CPU. No crash.
 
 ---
 
-## 🛠️ Troubleshooting & Diagnostics
+## 📝 Development Standards
 
-| Symptom | Root Cause | Resolution |
-|---------|------------|------------|
-| `curl: (7) Failed to connect` | Container still initializing or crashed | Wait 5s. Run `docker compose logs app --tail 15` to inspect stack trace. |
-| `ImportError` / `ModuleNotFoundError` | Missing `__init__.py` or stale cache | Rebuild: `docker compose build app && docker compose up -d` |
-| Port `8000` or `11434` already in use | Host service conflict | Change mapping in `docker-compose.yml`: `"8001:8000"` / `"11435:11434"` |
-| `Permission denied` on Docker socket | User lacks `docker` group access | `sudo usermod -aG docker $USER && newgrp docker` |
-| LLM timeout / `401 Unauthorized` | Invalid API key or rate limit | Verify `.env` credentials. Test: `docker compose exec app python -c "from app.llm import get_llm; print(get_llm().invoke('ping'))"` |
-
----
-
-## 📝 Development & Contribution Standards
-
-### 🔹 Commit Convention
-We follow [Conventional Commits](https://www.conventionalcommits.org/) for automated changelogs, semantic versioning, and audit-ready history.
-
+### 🔹 Commit Convention (Conventional Commits)
 ```
 <type>(<scope>): <description>
+```
+| Type | Scope | Example |
+|------|-------|---------|
+| `feat` | `m1`, `llm`, `docker` | `feat(m1): integrate pdfplumber extraction with Pydantic validation` |
+| `fix` | `graph`, `api` | `fix(llm): resolve OpenRouter timeout on retry` |
+| `docs` | `readme`, `setup` | `docs(readme): add cross-platform troubleshooting matrix` |
+| `test` | `m1`, `m6` | `test(m4): add pytest coverage for supplier deduplication` |
+| `refactor` | `state`, `nodes` | `refactor(llm): centralize provider config in single router` |
+| `chore` | `deps`, `ci` | `chore(deps): pin langgraph==0.2.22 for stability` |
 
-[optional body]
+### 🔹 Module Development Contract
+```python
+# In app/nodes/mX/node.py
+from app.llm import get_llm
+from app.state import PipelineState
+
+def module_function_name(state: PipelineState) -> dict:
+    """LangGraph entry point. Return ONLY state deltas."""
+    llm = get_llm()  # Always use this for AI calls
+    # ... your logic ...
+    return {"output_key": result}  # LangGraph merges automatically
 ```
 
-| Type | Scope Examples | Usage |
-|------|----------------|-------|
-| `feat` | `m1`, `llm`, `state`, `docker` | New functionality or module implementation |
-| `fix` | `graph`, `api`, `config` | Bug resolution or error handling |
-| `docs` | `readme`, `api`, `setup` | Documentation updates only |
-| `test` | `m1`, `m6`, `utils` | Test additions or coverage improvements |
-| `refactor` | `state`, `routing`, `nodes` | Code restructuring without behavior change |
-| `chore` | `deps`, `ci`, `docker` | Maintenance, dependency updates, tooling |
-
-### 🔹 Branch & Merge Workflow
-```bash
-git checkout -b feat/m1-extraction
-# Implement, test, and commit atomically
-git add .
-git commit -m "feat(m1): integrate pdfplumber extraction with Pydantic validation"
-git push -u origin feat/m1-extraction
-# Open Pull Request → Peer Review → Merge to main
-```
+**Rules:**
+- ✅ Work only in `app/nodes/mX/` + `tests/test_mX.py`
+- ✅ Return state deltas only
+- ✅ Always use `get_llm()` for AI calls
+- ❌ Never modify `state.py`, `graph.py`, `main.py`, or `llm.py` without coordination
+- ❌ Never commit `.env`, `outputs/`, `data/`, or `__pycache__/`
 
 ---
 
-## 📌 Project Roadmap & Next Steps
+## 📌 Project Roadmap
 
 | Phase | Target | Status |
 |-------|--------|--------|
-| ✅ Infrastructure | Docker Compose, LangGraph skeleton, FastAPI gateway, LLM router | Complete |
-| 🚧 Module 1 | PDF specification extraction with structured JSON output | Pending |
-| 🔜 Module 2–3 | DXF generation, HD presentation video | Planned |
-| 🔜 Module 4–5 | Supplier sourcing (Wikidata/Comtrade), AI negotiation simulation | Planned |
-| 🔜 Module 6–7 | TCO calculation (World Bank), Business Plan generation | Planned |
-| 🔜 Module 8–9 | Digital twin simulation, Multi-format catalog export | Planned |
+| ✅ Infrastructure | Docker, LangGraph skeleton, FastAPI, LLM router | Complete |
+| ✅ Module Scaffolding | M1–M9 entry points + test stubs | Complete |
+| 🚧 Module 1 | PDF extraction with `pdfplumber` + regex fallback | In Progress |
+| 🔜 Modules 4,6,7 | Supplier sourcing, TCO, Business Plan | Pending |
+| 🔜 Module 9 | Multi-format catalog export | Pending |
+| 🔜 Bonus Modules | M2 (CAD), M3 (Video), M5 (Negotiation), M8 (Digital Twin) | If time permits |
 
-This documentation will be updated iteratively as each module is implemented, tested, and integrated into the LangGraph state machine. All changes will maintain backward compatibility and adhere to open-source compliance standards.
+---
+
+## 🛠️ Troubleshooting
+
+| Symptom | Quick Fix |
+|---------|-----------|
+| `curl: (7) Failed to connect` | Wait 5s after `up -d`. Run `docker compose logs app --tail 10` |
+| `ImportError` / `ModuleNotFoundError` | Rebuild: `docker compose build app && docker compose up -d` |
+| Port `8000` already in use | Change mapping in `docker-compose.yml`: `"8001:8000"` |
+| `Permission denied` on Docker socket | `sudo usermod -aG docker $USER && newgrp docker` (Linux) |
+| LLM timeout / 401 | Verify `.env` credentials. Test: `docker compose exec app python -c "from app.llm import get_llm; print(get_llm().invoke('ping'))"` |
 
 ---
 
