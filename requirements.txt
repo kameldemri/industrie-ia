@@ -1,0 +1,32 @@
+# Core orchestration - NO checkpoint packages
+langgraph==0.2.22
+langchain==0.3.14
+langchain-community==0.3.14
+langchain-openai==0.2.3
+
+# API & Backend
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+
+# Extraction & Parsing
+pdfplumber==0.11.5
+pymupdf==1.25.1
+pytesseract==0.3.13
+
+# CAD & Docs
+ezdxf==1.3.3
+ifcopenshell==0.8.1
+reportlab==4.2.5
+openpyxl==3.1.5
+weasyprint==62.3
+jinja2==3.1.5
+lxml==5.3.0
+
+# Data & APIs
+requests==2.32.3
+pandas==2.2.3
+
+# Testing
+pytest==8.3.4
+httpx==0.28.1

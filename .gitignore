@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Environment & Secrets
+.env
+.env.local
+.env.backup
+*.secret
+
+# Outputs & State (keep local, never commit)
+outputs/
+data/
+*.sqlite
+*.db
+*.log
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
