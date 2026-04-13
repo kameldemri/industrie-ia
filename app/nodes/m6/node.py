@@ -5,6 +5,7 @@ import requests
 import openpyxl
 from datetime import datetime
 from typing import Dict, Any
+from app.llm import get_llm  # ✅ Added: project convention import
 from app.state import PipelineState
 
 # MOCK DATA aka fake data will be replaced when m1/m4/m5 are ready
@@ -45,7 +46,7 @@ def _read_inputs(state: PipelineState) -> Dict[str, Any]:
 
     #if m5 ready use real data else use fake data
     discount = MOCK_NEGOTIATED_DISCOUNT
-#print all the data 
+#print all the data
     return {
         "quantity": quantity,
         "unit_material": unit_material,
@@ -59,11 +60,11 @@ def _read_inputs(state: PipelineState) -> Dict[str, Any]:
 
 
 def _fetch_inflation(years: int = 10) -> list:#takes 10 years of data
-    url = ("https://api.worldbank.org/v2/country/DZ/indicator/FP.CPI.TOTL.ZG?format=json") 
+    url = ("https://api.worldbank.org/v2/country/DZ/indicator/FP.CPI.TOTL.ZG?format=json")
     try:
         r = requests.get(url, timeout=8)#sends a req to the api wait 8 sec max
         r.raise_for_status()#if req failed show 404 error goes to  exept
-        records = r.json()[1]#convert response to json where [1]---> actual data | [0] -->metdata 
+        records = r.json()[1]#convert response to json where [1]---> actual data | [0] -->metdata
         rates = [float(x["value"]) for x in records if x.get("value") is not None] # loop over the records, take value ,ignore none, convert each value to value to float & store them in list rates
         if len(rates) < years:#if we got less then years needed
             rates += [rates[-1]] * (years - len(rates)) #data augmentation by repeating the last values of the data unitl we reach the required length
@@ -75,19 +76,19 @@ def _fetch_inflation(years: int = 10) -> list:#takes 10 years of data
 
 
 
-# calculate TCO 
+# calculate TCO
 #input -> costes
 #inflation_rates ->list of inflation per year
 #years = 10 default is 10 years
-#output return the tco value 
+#output return the tco value
 
 def _compute_tco(inputs: Dict, inflation_rates: list, years: int = 10) -> Dict:
-    q = inputs["quantity"]#nb units to produce 200 
+    q = inputs["quantity"]#nb units to produce 200
     disc= inputs["discount"]# negtiated discount (0-100%)
 #calculate production cost (unit_material + unit_manufacturing) × quantity × (1 - discount)
     production_cost = (inputs["unit_material"] + inputs["unit_manufacturing"]) * q * (1 - disc)#(450 + 200) × 200 × 0.90 = 117,000 USD
-    breakdown= [] #stores one dict per year 
-    cumulative= 1.0 #inflation multiplier start at 1 grows each year 
+    breakdown= [] #stores one dict per year
+    cumulative= 1.0 #inflation multiplier start at 1 grows each year
     total= production_cost
 
 
@@ -95,8 +96,8 @@ def _compute_tco(inputs: Dict, inflation_rates: list, years: int = 10) -> Dict:
         cumulative *= (1 + inflation_rates[i] / 100)#update the inflation value each year
         yearly_maintenance = inputs["unit_maintenance"] * q * cumulative  ## inflated maintenance
         total += yearly_maintenance
-        
-        #dictionary fo each year 
+
+        #dictionary fo each year
         breakdown.append({
             "year": i + 1,
             "inflation_rate_pct": inflation_rates[i],
@@ -118,16 +119,16 @@ def _compute_tco(inputs: Dict, inflation_rates: list, years: int = 10) -> Dict:
         "calculated_at": datetime.now().isoformat(),
     }
 
-# to Excel file 
+# to Excel file
 
-#turn result of the tco to excel format 
-#create folder  outputs non error if it already exists 
-# define path then create execl 
-#rename to TCO Summery 
-#fill the execl file with data 
+#turn result of the tco to excel format
+#create folder  outputs non error if it already exists
+# define path then create execl
+#rename to TCO Summery
+#fill the execl file with data
 # save the excel outputs/tco_result.xlsx
 
-def _export_excel(tco: Dict, output_dir: str = "outputs") -> str:
+def _export_excel(tco: Dict, output_dir: str = "/app/outputs") -> str:  # ✅ Changed: Docker-consistent path
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, "tco_result.xlsx")
 
@@ -167,14 +168,15 @@ def _export_excel(tco: Dict, output_dir: str = "outputs") -> str:
 
 
 # LANGGRAPH NODE ENTRY POINT
-#takes shared data betwin modules langGraph 
+#takes shared data betwin modules langGraph
 #return dict
 
 def calculate_tco(state: PipelineState) -> Dict[str, Any]:
     """LangGraph"""
+    llm = get_llm()  # ✅ Added: project convention initialization (not used in M6 per bootcamp spec)
     print("[Module 6] TCO calculation starting")
     #print("its working !")
-    #sxtract the data from m1 , m4 ,m5 ---> fetch infos or mock data 
+    #sxtract the data from m1 , m4 ,m5 ---> fetch infos or mock data
     try:
         inputs     = _read_inputs(state)
         inflation  = _fetch_inflation(years=10)

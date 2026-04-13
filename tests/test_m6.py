@@ -56,7 +56,7 @@ def test_read_inputs_supplier_without_cost_uses_mock():
     assert result["unit_material"] == MOCK_UNIT_MATERIAL
 
 
-# 
+#
 # fetchin flation
 """Valid API response → parsed correctly"""
 def test_fetch_inflation_api_success():
@@ -189,7 +189,7 @@ def test_export_excel_creates_file(tmp_path):
 def test_calculate_tco_empty_state_returns_tco_data():
     """Empty state → runs with mocks → returns tco_data key"""
     with patch("app.nodes.m6.node._fetch_inflation", return_value=[3.0]*10), \
-         patch("app.nodes.m6.node._export_excel", return_value="outputs/tco_result.xlsx"):
+         patch("app.nodes.m6.node._export_excel", return_value="/app/outputs/tco_result.xlsx"):  # ✅ Changed: Docker path
         result = calculate_tco({})
 
     assert "tco_data" in result
@@ -209,7 +209,7 @@ def test_calculate_tco_uses_state_over_mock():
         "errors": [],
     }
     with patch("app.nodes.m6.node._fetch_inflation", return_value=[3.0]*10), \
-         patch("app.nodes.m6.node._export_excel", return_value="outputs/tco_result.xlsx"):
+         patch("app.nodes.m6.node._export_excel", return_value="/app/outputs/tco_result.xlsx"):  # ✅ Changed: Docker path
         result = calculate_tco(state)
 
     assert result["tco_data"]["quantity"] == 100
