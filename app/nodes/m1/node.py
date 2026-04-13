@@ -1,6 +1,8 @@
-
 import os
 import re
+import json
+from datetime import datetime
+
 import pdfplumber
 import fitz
 import pytesseract
@@ -24,7 +26,7 @@ def extract_pdf_text(path: str) -> str:
                 t = page.extract_text()
                 if t:
                     text += t + "\n"
-    except:
+    except Exception:
         pass
 
     return text
@@ -47,7 +49,7 @@ def extract_ocr_text(path: str) -> str:
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
             text += pytesseract.image_to_string(img) + "\n"
-    except:
+    except Exception:
         pass
 
     return text
@@ -75,12 +77,11 @@ def clean_text(text: str) -> str:
 
 
 # =========================
-# 🔥 NORMALIZATION CORE (ADDED)
+# NORMALIZATION CORE
 # =========================
 def normalize_value(v: str) -> str:
     v = v.lower().strip()
 
-    # normalize industrial tags
     v = re.sub(r"\bdn\s*", "DN", v)
     v = re.sub(r"\bpn\s*", "PN", v)
     v = re.sub(r"api\s*", "API ", v)
@@ -116,7 +117,6 @@ def filter_temperatures(temps: list) -> list:
 
         value = int(match.group())
 
-        # industrial realistic range
         if -100 <= value <= 600:
             valid.append(f"{value}°C")
 
@@ -124,7 +124,7 @@ def filter_temperatures(temps: list) -> list:
 
 
 # =========================
-# 5. REGEX EXTRACTION (IMPROVED)
+# 5. REGEX EXTRACTION
 # =========================
 def parse_all_specs(text: str) -> dict:
 
@@ -168,7 +168,7 @@ def parse_all_specs(text: str) -> dict:
 
 
 # =========================
-# 6. LLM EXTRACTION (STRICT JSON)
+# 6. LLM EXTRACTION
 # =========================
 def extract_specs_llm(text: str) -> dict:
 
@@ -225,7 +225,7 @@ def normalize_specs(specs: dict) -> dict:
 # 8. MAIN LANGGRAPH NODE
 # =========================
 def extract_specs(state: dict):
-    
+
     try:
         input_file = state.get("input_file")
         input_prompt = state.get("input_prompt", "")
@@ -241,10 +241,10 @@ def extract_specs(state: dict):
         if not specs or not any(specs.values()):
             specs = parse_all_specs(full_text)
 
-        # 4. normalization (IMPORTANT)
+        # 4. normalization
         specs = normalize_specs(specs)
 
-        # 5. ✅ FIX: inject into state (SANS CHANGER TA LOGIQUE)
+        # 5. inject into state
         state["M1_result"] = {
             "input_file": input_file,
             "input_prompt": input_prompt,
@@ -256,10 +256,27 @@ def extract_specs(state: dict):
             }
         }
 
+        # =========================
+        # SAVE OUTPUT M1
+        # =========================
+        try:
+            os.makedirs("outputs", exist_ok=True)
+
+            filename = f"M1_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            path = os.path.join("outputs", filename)
+
+            with open(path, "w") as f:
+                json.dump(state["M1_result"], f, indent=4)
+
+            # FIX: was inside the with block — moved outside so it always runs
+            state["M1_result"]["output_file"] = path
+
+        except Exception as e:
+            print("Save M1 failed:", e)
+
         return state
 
     except Exception as e:
         state["M1_result"] = {}
         state["error"] = str(e)
         return state
-
