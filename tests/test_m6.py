@@ -16,7 +16,6 @@ from app.nodes.m6.node import (
     MOCK_INFLATION_RATES,
 )
 
-
 # read inputs
 
 def test_read_inputs_all_mocks_when_state_empty():
