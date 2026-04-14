@@ -1,46 +1,19 @@
-import json
-from langchain_community.llms import Ollama
-# =========================
-# CONFIG LLM
-# =========================
-MODEL_NAME = "mistral"
-llm = Ollama(model=MODEL_NAME)
+import os
+from langchain_openai import ChatOpenAI
 
-# =========================
-# 1. CALL LLM RAW
-# =========================
-def call_llm(prompt: str) -> str:
-    try:
-        return llm.invoke(prompt)
-    except Exception as e:
-        return f"ERROR: {str(e)}"
+def get_llm():
+    """
+    Returns a configured LangChain ChatOpenAI instance.
+    Automatically routes to local Ollama or external APIs based on .env.
+    """
+    base_url = os.getenv("LLM_BASE_URL", "http://ollama:11434/v1")
+    api_key = os.getenv("LLM_API_KEY", "unused")
+    model = os.getenv("LLM_MODEL_NAME", "mistral")
 
-
-# =========================
-# 2. SAFE JSON PARSER
-# =========================
-def extract_json(response: str) -> dict:
-    try:
-        start = response.find("{")
-        end = response.rfind("}") + 1
-
-        # FIX: was checking end == -1, but rfind()+1 returns 0 when not found
-        if start == -1 or end == 0:
-            return {}
-
-        return json.loads(response[start:end])
-
-    except Exception:
-        return {}
-
-
-# =========================
-# 3. MAIN FUNCTION (USED BY ALL MODULES)
-# =========================
-def llm_extract(prompt: str, mode: str = "json"):
-    response = call_llm(prompt)
-
-    if mode == "json":
-        return extract_json(response)
-
-    return response
+    return ChatOpenAI(
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=0.1,
+        max_retries=2,
+    )
