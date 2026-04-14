@@ -9,7 +9,7 @@ import requests
 import json
 import os
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from datetime import datetime
 
 # ─────────────────────────────────────────
@@ -29,31 +29,32 @@ HEADERS_WIKIDATA = {
 # MATERIAL → HS CODE
 # ─────────────────────────────────────────
 HS_MAP = {
-    "carbon steel": "7208",
-    "steel":        "7208",
-    "cast iron":    "7201",
-    "inconel":      "7502",
-    "cf3m":         "7208",
-    "cf8m":         "7208",
-    "wcb":          "7208",
+    "carbon steel":    "7208",
+    "steel":           "7208",
+    "stainless steel": "7219",
+    "cast iron":       "7201",
+    "inconel":         "7502",
+    "cf3m":            "7219",
+    "cf8m":            "7219",
+    "wcb":             "7208",
 }
 
 # ─────────────────────────────────────────
 # MATERIAL → MOT-CLÉ WIKIDATA
 # ─────────────────────────────────────────
 WIKIDATA_KEYWORDS = {
-    "carbon steel": "steel",
-    "steel":        "steel",
-    "cast iron":    "cast iron",
-    "inconel":      "nickel alloy",
-    "cf3m":         "stainless steel",
-    "cf8m":         "stainless steel",
-    "wcb":          "carbon steel",
+    "carbon steel":    "steel",
+    "steel":           "steel",
+    "stainless steel": "stainless steel",
+    "cast iron":       "cast iron",
+    "inconel":         "nickel alloy",
+    "cf3m":            "stainless steel",
+    "cf8m":            "stainless steel",
+    "wcb":             "carbon steel",
 }
 
 # ─────────────────────────────────────────
 # REPORTER CODES → noms de pays
-# (les plus gros exportateurs mondiaux d'acier/métaux)
 # ─────────────────────────────────────────
 REPORTER_CODES = [
     156,   # China
@@ -104,14 +105,8 @@ def extract_materials(state: Dict[str, Any]) -> List[str]:
 # ─────────────────────────────────────────
 # API 1 — UN COMTRADE public/v1/preview
 # Sans clé, sans compte, 100% gratuit
-# Limite : 500 enregistrements par requête
-# On fait une requête par pays exportateur majeur
 # ─────────────────────────────────────────
 def get_export_data(hs_code: str) -> List[Dict]:
-    """
-    Appelle l'endpoint public Comtrade pour chaque pays
-    et récupère la valeur d'export du code HS.
-    """
     results = []
 
     for reporter_code in REPORTER_CODES:
@@ -119,10 +114,10 @@ def get_export_data(hs_code: str) -> List[Dict]:
             url = "https://comtradeapi.un.org/public/v1/preview/C/A/HS"
             params = {
                 "cmdCode":      hs_code,
-                "flowCode":     "X",            # X = exports
+                "flowCode":     "X",
                 "period":       "2022",
                 "reporterCode": reporter_code,
-                "partnerCode":  0,              # 0 = monde entier
+                "partnerCode":  0,
             }
 
             r = requests.get(
@@ -142,11 +137,9 @@ def get_export_data(hs_code: str) -> List[Dict]:
                         "export_value": val,
                     })
 
-            # Respecter le rate limit public Comtrade
             time.sleep(0.3)
 
         except Exception:
-            # Un pays échoue → on continue avec le suivant
             time.sleep(0.3)
             continue
 
@@ -233,12 +226,13 @@ def compute_score(export_value: float) -> float:
 # ─────────────────────────────────────────
 # BUILD SUPPLIERS LIST
 # ─────────────────────────────────────────
-def build_suppliers(material: str, hs_code: str) -> List[Dict]:
+def build_suppliers(material: str, hs_code: str) -> Tuple[List[Dict], List[Dict]]:
     suppliers = []
-    mat_key = material.lower().strip()
+    mat_key   = material.lower().strip()
 
     # --- Pays exportateurs (Comtrade) ---
-    for e in get_export_data(hs_code):
+    top_exporters = get_export_data(hs_code)
+    for e in top_exporters:
         suppliers.append({
             "type":    "country_exporter",
             "name":    e["country"],
@@ -266,13 +260,12 @@ def build_suppliers(material: str, hs_code: str) -> List[Dict]:
         })
 
     suppliers.sort(key=lambda x: x["score"], reverse=True)
-    return suppliers[:8]
+    return suppliers[:8], top_exporters
 
 # ─────────────────────────────────────────
-# SAVE OUTPUT
+# SAVE OUTPUT → dossier outputs/ existant
 # ─────────────────────────────────────────
 def save_output(state: Dict[str, Any], output_dir: str = "outputs") -> str:
-    os.makedirs(output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath  = os.path.join(output_dir, f"M4_result_{timestamp}.json")
 
@@ -301,11 +294,16 @@ def source_suppliers(state: Dict[str, Any]) -> Dict[str, Any]:
     print("   APIs: Comtrade public + Wikidata (0 clé requise)")
     print("="*55)
 
+    # Cas erreur : state vide ou M1_result manquant
+    if not state or "M1_result" not in state:
+        state["M4_result"] = {"error": "M1_result manquant dans le state"}
+        return state
+
     materials = extract_materials(state)
 
+    # Cas erreur : pas de matériaux
     if not materials:
-        print("⚠️  Aucun matériau trouvé dans M1_result")
-        state["M4_result"] = []
+        state["M4_result"] = {"error": "Aucun matériau trouvé dans M1_result.specs"}
         return state
 
     results = []
@@ -314,17 +312,24 @@ def source_suppliers(state: Dict[str, Any]) -> Dict[str, Any]:
         hs  = HS_MAP.get(mat, "7208")
 
         print(f"\n📦 Matériau : {m}  |  HS : {hs}")
-        suppliers = build_suppliers(mat, hs)
+        suppliers, top_exporters = build_suppliers(mat, hs)
         print(f"  → {len(suppliers)} fournisseurs trouvés")
 
         results.append({
-            "material":  m,
-            "hs_code":   hs,
-            "suppliers": suppliers,
+            "material":      m,
+            "hs_code":       hs,
+            "suppliers":     suppliers,
+            "top_exporters": top_exporters,
         })
 
     state["M4_result"] = results
-    save_output(state)
+
+    # Sauvegarde dans outputs/
+    try:
+        save_output(state)
+    except Exception as e:
+        print(f"[M4] save_output error: {e}")
+
     return state
 
 
