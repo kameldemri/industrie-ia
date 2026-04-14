@@ -3,188 +3,84 @@ import re
 import json
 from datetime import datetime
 
+from typing import Dict, Any   # 🔥 FIX IMPORTANT
+
 import pdfplumber
 import fitz
 import pytesseract
 from PIL import Image
 
-from app.llm import llm_extract
+from app.llm import get_llm
 
 
 # =========================
-# 1. PDF TEXT EXTRACTION
+# PDF TEXT EXTRACTION
 # =========================
 def extract_pdf_text(path: str) -> str:
-    text = ""
-
     if not path or not os.path.exists(path):
         return ""
 
+    text = ""
     try:
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
                 t = page.extract_text()
                 if t:
                     text += t + "\n"
-    except Exception:
+    except:
         pass
 
     return text
 
 
 # =========================
-# 2. OCR FALLBACK
+# OCR FALLBACK
 # =========================
 def extract_ocr_text(path: str) -> str:
-    text = ""
-
     if not path or not os.path.exists(path):
         return ""
 
+    text = ""
     try:
         doc = fitz.open(path)
-
         for page in doc:
             pix = page.get_pixmap()
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
             text += pytesseract.image_to_string(img) + "\n"
-    except Exception:
+    except:
         pass
 
     return text
 
 
 # =========================
-# 3. SMART TEXT
+# FULL TEXT
 # =========================
 def get_full_text(path: str) -> str:
     text = extract_pdf_text(path)
-
     if len(text.strip()) < 50:
-        print("⚠️ OCR fallback activated")
-        text = extract_ocr_text(path)
-
+        text += extract_ocr_text(path)
     return text
 
 
 # =========================
-# 4. CLEANING FUNCTION
+# CLEAN TEXT
 # =========================
 def clean_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # =========================
-# NORMALIZATION CORE
-# =========================
-def normalize_value(v: str) -> str:
-    v = v.lower().strip()
-
-    v = re.sub(r"\bdn\s*", "DN", v)
-    v = re.sub(r"\bpn\s*", "PN", v)
-    v = re.sub(r"api\s*", "API ", v)
-    v = re.sub(r"iso\s*", "ISO ", v)
-    v = re.sub(r"en\s*", "EN ", v)
-
-    v = re.sub(r"\s+", " ", v)
-    return v.strip()
-
-
-def strong_dedup(lst):
-    seen = set()
-    out = []
-
-    for x in lst:
-        if not x:
-            continue
-        nx = normalize_value(x)
-        if nx not in seen:
-            seen.add(nx)
-            out.append(nx)
-
-    return out
-
-
-def filter_temperatures(temps: list) -> list:
-    valid = []
-
-    for t in temps:
-        match = re.search(r"-?\d+", t)
-        if not match:
-            continue
-
-        value = int(match.group())
-
-        if -100 <= value <= 600:
-            valid.append(f"{value}°C")
-
-    return sorted(list(set(valid)))
-
-
-# =========================
-# 5. REGEX EXTRACTION
-# =========================
-def parse_all_specs(text: str) -> dict:
-
-    text = text.lower()
-
-    dn = list(set(re.findall(r"dn\s?\d+", text)))
-    pn = list(set(re.findall(r"pn\s?\d+", text)))
-
-    materials = list(set(re.findall(
-        r"(inox|stainless steel|steel|carbon steel|cast iron|aluminium|brass|inconel|cf8m|cf3m|wcb)",
-        text
-    )))
-
-    temperatures = filter_temperatures(
-        re.findall(r"-?\d+\s?°c", text)
-    )
-
-    fluids = list(set(re.findall(
-        r"(water|steam|oil|gas|air|petroleum|hydrocarbon|fuel)",
-        text
-    )))
-
-    certifications = list(set(re.findall(
-        r"(atex|sil2|sil3|api\s?\d+|iso\s?\d+|en\s?\d+|ta-luft)",
-        text
-    )))
-
-    valve_types = []
-    if "butterfly" in text:
-        valve_types.append("double offset butterfly valve")
-
-    return {
-        "diameters": strong_dedup(dn),
-        "pressures": strong_dedup(pn),
-        "materials": strong_dedup(materials),
-        "temperatures": temperatures,
-        "fluids": strong_dedup(fluids),
-        "certifications": strong_dedup(certifications),
-        "valve_types": strong_dedup(valve_types)
-    }
-
-
-# =========================
-# 6. LLM EXTRACTION
+# SAFE LLM EXTRACTION
 # =========================
 def extract_specs_llm(text: str) -> dict:
 
+    llm = get_llm()
+
     prompt = f"""
-You are an industrial mechanical engineer.
+Extract industrial specs from text.
 
-Extract structured industrial specifications.
-
-Return STRICT JSON ONLY.
-
-Rules:
-- NO explanation
-- ONLY valid JSON
-- Extract ALL values present
-
-Schema:
+Return ONLY valid JSON:
 {{
   "diameters": [],
   "pressures": [],
@@ -196,59 +92,102 @@ Schema:
 }}
 
 TEXT:
-{text[:4000]}
+{text[:3000]}
 """
 
-    return llm_extract(prompt, mode="json")
+    try:
+        res = llm.invoke(prompt)
+        content = res.content.strip()
+        return json.loads(content)
+    except:
+        return {}
 
 
 # =========================
-# 7. NORMALIZATION FUNCTION
+# REGEX FALLBACK
 # =========================
-def normalize_specs(specs: dict) -> dict:
+def parse_all_specs(text: str) -> dict:
 
-    def clean_list(lst):
-        return strong_dedup(lst)
+    text = text.lower()
 
     return {
-        "diameters": clean_list(specs.get("diameters", [])),
-        "pressures": clean_list(specs.get("pressures", [])),
-        "materials": clean_list(specs.get("materials", [])),
-        "temperatures": filter_temperatures(specs.get("temperatures", [])),
-        "fluids": clean_list(specs.get("fluids", [])),
-        "certifications": clean_list(specs.get("certifications", [])),
-        "valve_types": clean_list(specs.get("valve_types", []))
+        "diameters": list(set(re.findall(r"\bdn\s?\d+\b", text))),
+        "pressures": list(set(re.findall(r"\bpn\s?\d+\b", text))),
+        "materials": list(set(re.findall(r"(inox|steel|carbon steel|cast iron|aluminium|brass|inconel|cf8m|cf3m|wcb)", text))),
+        "temperatures": list(set(re.findall(r"-?\d+\s?°c", text))),
+        "fluids": list(set(re.findall(r"(water|steam|oil|gas|air)", text))),
+        "certifications": list(set(re.findall(r"(atex|sil2|sil3|api\s?\d+|iso\s?\d+)", text))),
+        "valve_types": ["butterfly valve"] if "butterfly" in text else []
     }
 
 
 # =========================
-# 8. MAIN LANGGRAPH NODE
+# NORMALIZE (CLEAN ONLY)
+# =========================
+def normalize_specs(specs: dict) -> dict:
+
+    def clean_list(lst):
+        if not lst:
+            return []
+        return list(set([str(x).lower().strip() for x in lst]))
+
+    diameters = []
+    for d in specs.get("diameters", []):
+        nums = re.findall(r"\d+", d)
+        if nums:
+            diameters.append(f"dn{int(nums[0])}")
+
+    pressures = []
+    for p in specs.get("pressures", []):
+        nums = re.findall(r"\d+", p)
+        if nums:
+            pressures.append(f"pn{int(nums[0])}")
+
+    temperatures = []
+    for t in specs.get("temperatures", []):
+        nums = re.findall(r"-?\d+", t)
+        for n in nums:
+            temperatures.append(f"{int(n)}°c")
+
+    materials = clean_list(specs.get("materials", []))
+
+    certifications = []
+    for c in specs.get("certifications", []):
+        certifications.append(c.lower().replace(" ", ""))
+
+    return {
+        "diameters": sorted(list(set(diameters))),
+        "pressures": sorted(list(set(pressures))),
+        "materials": sorted(list(set(materials))),
+        "temperatures": sorted(list(set(temperatures))),
+        "fluids": sorted(list(set(clean_list(specs.get("fluids", []))))),
+        "certifications": sorted(list(set(certifications))),
+        "valve_types": sorted(list(set(clean_list(specs.get("valve_types", [])))))
+    }
+
+
+# =========================
+# NODE M1
 # =========================
 def extract_specs(state: dict):
 
     try:
-        input_file = state.get("input_file")
-        input_prompt = state.get("input_prompt", "")
+        file = state.get("input_file")
+        prompt = state.get("input_prompt", "")
 
-        # 1. Extract text
-        pdf_text = get_full_text(input_file)
-        full_text = clean_text(pdf_text + " " + input_prompt)
+        text = clean_text(get_full_text(file) + " " + prompt)
 
-        # 2. LLM extraction
-        specs = extract_specs_llm(full_text)
+        specs = extract_specs_llm(text)
 
-        # 3. fallback regex if LLM fails
         if not specs or not any(specs.values()):
-            specs = parse_all_specs(full_text)
+            specs = parse_all_specs(text)
 
-        # 4. normalization
         specs = normalize_specs(specs)
 
-        # 5. inject into state
         state["M1_result"] = {
-            "input_file": input_file,
-            "input_prompt": input_prompt,
-            "extracted_text_length": len(full_text),
+            "input_file": file,
+            "input_prompt": prompt,
+            "text_length": len(text),
             "specs": specs,
             "metadata": {
                 "source": "pdf+ocr+llm",
@@ -256,23 +195,13 @@ def extract_specs(state: dict):
             }
         }
 
-        # =========================
-        # SAVE OUTPUT M1
-        # =========================
-        try:
-            os.makedirs("outputs", exist_ok=True)
+        os.makedirs("outputs", exist_ok=True)
+        path = f"outputs/M1_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
-            filename = f"M1_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            path = os.path.join("outputs", filename)
+        with open(path, "w") as f:
+            json.dump(state["M1_result"], f, indent=2)
 
-            with open(path, "w") as f:
-                json.dump(state["M1_result"], f, indent=4)
-
-            # FIX: was inside the with block — moved outside so it always runs
-            state["M1_result"]["output_file"] = path
-
-        except Exception as e:
-            print("Save M1 failed:", e)
+        state["M1_result"]["output_file"] = path
 
         return state
 
@@ -280,3 +209,37 @@ def extract_specs(state: dict):
         state["M1_result"] = {}
         state["error"] = str(e)
         return state
+
+
+# =========================
+# SAVE OUTPUT FUNCTION (OK)
+# =========================
+def save_output(state: Dict[str, Any]) -> str:
+
+    try:
+        os.makedirs("outputs", exist_ok=True)
+
+        filename = f"M4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        path = os.path.join("outputs", filename)
+
+        output_data = {
+            "M1_result": state.get("M1_result", {}),
+            "M4_result": state.get("M4_result", []),
+            "status": "success",
+            "timestamp": datetime.now().isoformat()
+        }
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+        return path
+
+    except Exception as e:
+        print("❌ SAVE ERROR:", e)
+        return ""
+
+
+# =========================
+# EXPORT NODE
+# =========================
+m1_node = extract_specs
