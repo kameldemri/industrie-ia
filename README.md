@@ -15,6 +15,10 @@
   - [Fault Tolerance Design](#fault-tolerance-design)
 - [Module Documentation](#-module-documentation)
   - [Module 2: CAD Generation](#module-2-cad-generation)
+  - [Module 3: HD Presentation Video Generation](#module-3-hd-presentation-video-generation)
+  - [Module 5: AI Supplier Negotiation Simulation](#module-5-ai-supplier-negotiation-simulation)
+  - [Module 6: Total Cost of Ownership (TCO) Calculator](#module-6-total-cost-of-ownership-tco-calculator)
+  - [Module 7: Business Plan Generator](#module-7-business-plan-generator)
   - [Module 8: Digital Twin & Predictive Maintenance](#module-8-digital-twin--predictive-maintenance)
   - [Module 9: Catalog Export](#module-9-catalog-export)
   - [Adding Module Documentation](#adding-module-documentation)
@@ -157,6 +161,281 @@ state = {
 }
 result = generate_cad(state)
 # result["cad_paths"] → ["/app/outputs/Valve_DN100_2D.dxf", "/app/outputs/Valve_DN100_3D.ifc"]
+```
+
+---
+
+### Module 3: HD Presentation Video Generation
+
+**File:** `app/nodes/m3/node.py`
+**Function:** `generate_video(state: PipelineState) -> dict`
+
+#### Purpose
+Convert 2D DXF engineering drawings into a dynamic 3D presentation video using Manim. Parses geometric entities, normalizes dimensions, generates a scene script, and renders an MP4/AVI file with camera rotation, layer-based coloring, and technical annotations.
+
+#### Inputs (Read from PipelineState)
+| Key | Type | Description | Fallback |
+|-----|------|-------------|----------|
+| `cad_paths` | `list[str]` | File paths from Module 2 (expects `.dxf`) | `[]` |
+| `extracted_specs` | `dict` | Part metadata (name, material, pressure) for on-screen text | `{}` |
+| `errors` | `list[str]` | Accumulated warnings from upstream | `[]` |
+
+#### Outputs (Returned to LangGraph)
+| Key | Type | Description |
+|-----|------|-------------|
+| `video_path` | `str` | Absolute path to rendered `.mp4` file |
+| `video_path_avi` | `str` / `None` | Path to `.avi` conversion (if `ffmpeg` available) |
+| `m3_script` | `str` | Path to the dynamically generated Manim Python script |
+| `status_m3` | `str` | Execution state (`"done"` or `"failed"`) |
+| `errors` | `list[str]` | Updated error list with module-specific messages |
+
+#### Implementation Details
+
+**DXF Parsing & Dimension Normalization**
+- Reads `.dxf` via `ezdxf` and extracts `CIRCLE` and `LWPOLYLINE` entities
+- Scales raw millimeter coordinates to Manim's normalized unit space (0.3–3.0 range) to prevent rendering overflow or microscopic geometry
+- Maps DXF layer names to semantic roles (`BODY`, `BORE`, `INLET`, `OUTLET`, `FLANGE`)
+
+**Dynamic Script Generation**
+- Builds a complete `manim.ThreeDScene` class as a string template
+- Embeds parsed objects, layer colors, and M1-extracted specs directly into the script
+- Uses conditional positioning logic (e.g., flanges top/bottom, bore at origin, inlet/outlet on axes) to assemble a coherent 3D representation
+
+**Rendering Pipeline**
+- Executes Manim via `subprocess.run` with low-quality (`-ql`) settings for fast demo turnaround (~10–20s render)
+- Enables ambient camera rotation (`begin_ambient_camera_rotation`) for 3D showcase
+- Optionally converts MP4 to AVI using `ffmpeg` for broader compatibility
+- All errors are caught and appended to `state["errors"]`; the node never raises unhandled exceptions
+
+**Graceful Degradation**
+- Missing `cad_paths` or `.dxf` file → logs warning, returns `"failed"` status
+- Empty DXF parsing → falls back to a default placeholder box
+- `ffmpeg` missing → AVI output skipped, MP4 retained
+
+#### Usage Example
+```python
+state = {
+    "cad_paths": ["/app/outputs/Valve_DN100_2D.dxf", "/app/outputs/Valve_DN100_3D.ifc"],
+    "extracted_specs": {"part_name": "Valve DN100", "pressure": "PN40", "material": "SS316L"},
+    "errors": []
+}
+result = generate_video(state)
+# result["status_m3"] → "done"
+# result["video_path"] → "outputs/videos/m3_<uuid>/480p15/GeneratedScene.mp4"
+```
+
+---
+
+### Module 5: AI Supplier Negotiation Simulation
+
+**File:** `app/nodes/m5/node.py`
+**Function:** `simulate_negotiation(state: PipelineState) -> dict`
+
+#### Purpose
+Simulate an AI-driven procurement negotiation with multiple suppliers to secure optimal pricing and terms. Uses a structured LLM prompt to generate a realistic negotiation transcript, final agreed prices, and a negotiated discount percentage for downstream cost calculations.
+
+#### Inputs (Read from PipelineState)
+| Key | Type | Description | Fallback |
+|-----|------|-------------|----------|
+| `extracted_specs` | `dict` | Product specifications (part name, material, quantity, pressure rating) | `{}` |
+| `suppliers` | `list[dict]` | Supplier list from Module 4 (name, country, base price) | `MOCK_SUPPLIERS` (3 predefined entries) |
+| `errors` | `list[str]` | Accumulated warnings from upstream | `[]` |
+
+#### Outputs (Returned to LangGraph)
+| Key | Type | Description |
+|-----|------|-------------|
+| `negotiation_transcript` | `list[dict]` | Structured dialogue log: role, message, timestamp |
+| `negotiated_prices` | `dict[str, float]` | Final agreed price per unit per supplier |
+| `selected_supplier` | `str` | Name of the chosen supplier after negotiation |
+| `negotiated_discount` | `float` | Discount factor (0.0–1.0) applied to base pricing |
+| `errors` | `list[str]` | Updated error list with module-specific messages |
+
+#### Implementation Details
+
+**Structured Prompt Engineering**
+- Builds a context-rich prompt embedding product specs, quantity, and supplier list
+- Enforces strict JSON output schema via explicit instructions to prevent hallucination
+- Strips markdown code blocks (` ```json `) if added by the LLM for robust parsing
+
+**Graceful Fallback Strategy**
+- If `suppliers` is missing or empty, uses a predefined mock list (`MOCK_SUPPLIERS`) and logs a warning
+- If LLM invocation fails or returns invalid JSON, applies a conservative 10% fallback discount and generates a system message transcript
+- All errors are appended to `state["errors"]`; the node never raises unhandled exceptions
+
+**LLM Convention Compliance**
+- Imports and initializes `get_llm()` per project standard, though the negotiation logic is prompt-based and does not require iterative agent calls
+- Provider-agnostic: works with local Ollama (Mistral) or external APIs via `.env` configuration
+
+**Output Validation**
+- Parses LLM response with `json.loads()` and validates required keys (`transcript`, `final_prices`, `selected_supplier`, `discount_pct`)
+- Converts `discount_pct` to a decimal factor (`0.10` for 10%) for direct use in Module 6 TCO calculations
+
+#### Usage Example
+```python
+state = {
+    "extracted_specs": {
+        "part_name": "Valve_DN100",
+        "material": "SS316L",
+        "quantity": 200
+    },
+    "suppliers": [
+        {"name": "SupplierAlpha_DZ", "country": "Algeria", "base_price": 450.0},
+        {"name": "SupplierBeta_FR", "country": "France", "base_price": 520.0}
+    ],
+    "errors": []
+}
+result = simulate_negotiation(state)
+# result["negotiated_discount"] → 0.10 (10% discount applied)
+# result["selected_supplier"] → "SupplierAlpha_DZ"
+# result["negotiation_transcript"] → [{"role": "buyer", "message": "..."}, ...]
+```
+
+---
+
+### Module 6: Total Cost of Ownership (TCO) Calculator
+
+**File:** `app/nodes/m6/node.py`
+**Function:** `calculate_tco(state: PipelineState) -> dict`
+
+#### Purpose
+Calculate a 10-year Total Cost of Ownership projection for manufactured components, integrating material/manufacturing costs, negotiated supplier discounts, and inflation-adjusted maintenance expenses. Outputs structured JSON and Excel files for downstream business planning and client reporting.
+
+#### Inputs (Read from PipelineState)
+| Key | Type | Description | Fallback |
+|-----|------|-------------|----------|
+| `extracted_specs` | `dict` | Product specifications from Module 1 (quantity, material) | `{}` |
+| `suppliers` | `list[dict]` | Supplier cost data from Module 4 (unit_material_cost, unit_manufacturing_cost, unit_maintenance_cost) | `[]` → mock costs |
+| `negotiation_result` | `dict` | Negotiation outcome from Module 5 (discount factor) | `{}` → 10% mock discount |
+| `errors` | `list[str]` | Accumulated warnings from upstream | `[]` |
+
+#### Outputs (Returned to LangGraph)
+| Key | Type | Description |
+|-----|------|-------------|
+| `tco_data` | `dict` | Full TCO calculation: production cost, total TCO, per-unit cost, yearly breakdown |
+| `tco_excel_path` | `str` | Absolute path to generated Excel file (`outputs/tco_result.xlsx`) |
+| `tco_json_path` | `str` | Absolute path to generated JSON file (`outputs/tco_result.json`) |
+| `errors` | `list[str]` | Updated error list with module-specific messages |
+
+#### Implementation Details
+
+**Input Resolution with Fallbacks**
+- Reads quantity from `extracted_specs["quantity"]`; defaults to 200 units if missing
+- Reads unit costs from first supplier entry; falls back to predefined mock values if supplier data absent or malformed
+- Reads discount from `negotiation_result["discount"]`; defaults to 0.10 (10%) if negotiation output unavailable
+
+**World Bank API Integration**
+- Fetches Algeria inflation rates via public endpoint: `https://api.worldbank.org/v2/country/DZ/indicator/FP.CPI.TOTL.ZG?format=json`
+- Implements 10-second timeout and exception handling; falls back to predefined mock inflation curve on failure
+- Pads or truncates response to exactly 10 years for consistent projection horizon
+
+**TCO Calculation Engine**
+- Production cost = `(unit_material + unit_manufacturing) × quantity × (1 - discount)`
+- Maintenance costs compound annually using cumulative inflation factor: `maintenance_year_n = base_maintenance × ∏(1 + inflation_i/100)`
+- Returns granular yearly breakdown with inflation rate, cumulative factor, and inflated maintenance cost per year
+
+**Multi-Format Export**
+- **Excel**: Two worksheets — "TCO Summary" (key metrics) and "Yearly Breakdown" (10-year projection). Includes unit cost rows for Module 7 compatibility.
+- **JSON**: Pretty-printed, UTF-8 encoded dump of full `tco_data` dictionary for machine consumption.
+- Both files saved to `outputs/` directory (Docker-mounted to host).
+
+**Graceful Degradation**
+- Missing upstream data triggers mock values with logged warnings
+- API failures activate fallback inflation curve without pipeline interruption
+- All exceptions caught at node level; errors appended to `state["errors"]`, never raised
+
+#### Usage Example
+```python
+state = {
+    "extracted_specs": {"quantity": 200, "material": "SS316L"},
+    "suppliers": [{
+        "unit_material_cost": 420.0,
+        "unit_manufacturing_cost": 180.0,
+        "unit_maintenance_cost": 45.0
+    }],
+    "negotiation_result": {"discount": 0.12},  # 12% negotiated discount
+    "errors": []
+}
+result = calculate_tco(state)
+# result["tco_data"]["total_tco_usd"] → 138420.50 (example)
+# result["tco_excel_path"] → "outputs/tco_result.xlsx"
+```
+
+---
+
+### Module 7: Business Plan Generator
+
+**File:** `app/nodes/m7/node.py`
+**Function:** `generate_business_plan(state: Dict[str, Any]) -> dict`
+
+#### Purpose
+Generate a comprehensive business plan for manufactured components, including SWOT analysis, 3-year financial projections, Return on Investment (ROI), and Net Present Value (NPV). Outputs structured JSON, Excel, and PDF files for stakeholder review and client delivery.
+
+#### Inputs (Read from PipelineState)
+| Key | Type | Description | Fallback |
+|-----|------|-------------|----------|
+| `tco_data` | `dict` | Cost analysis from Module 6 (quantity, unit costs, total TCO) | Mock TCO values |
+| `extracted_specs` | `dict` | Product specifications from Module 1 (name, material) | `{}` |
+| `suppliers` | `list[dict]` | Supplier list from Module 4 | `[]` |
+| `errors` | `list[str]` | Accumulated warnings from upstream | `[]` |
+
+#### Outputs (Returned to LangGraph)
+| Key | Type | Description |
+|-----|------|-------------|
+| `business_plan_paths` | `dict[str, str]` | Paths to generated files: `json`, `excel`, `pdf` |
+| `business_plan_summary` | `dict` | Key financial metrics: NPV, 3-year ROI, Year 3 revenue |
+| `plan` | `dict` | Full business plan structure: projections, SWOT, financials |
+| `errors` | `list[str]` | Updated error list (add `state.get("errors", [])` for convention compliance) |
+
+#### Implementation Details
+
+**TCO Data Integration**
+- Reads `tco_data` from Module 6; falls back to mock values if missing
+- Extracts quantity, unit material/manufacturing costs, and total TCO for financial modeling
+- Gracefully handles missing keys via `.get()` with sensible defaults
+
+**Financial Projection Engine**
+- Calculates unit cost with 5% efficiency gain: `base_cost × 0.95`
+- Sets unit price at 2.5× cost (standard industrial markup)
+- Projects 3-year revenue/cost growth: revenue +20% YoY, costs +15% YoY
+- Applies 81% net margin factor to simulate operational efficiency
+
+**Investment Metrics**
+- **NPV (Net Present Value)**: Discounts 3-year net income at 10% rate, subtracts initial production investment
+- **ROI (Return on Investment)**: `(total_net_income - investment) / investment × 100`
+- Both metrics rounded to 2 decimals for client-ready reporting
+
+**SWOT Analysis**
+- Predefined, context-aware strengths/weaknesses/opportunities/threats based on industrial manufacturing domain
+- Structured for easy Excel/PDF rendering and stakeholder comprehension
+
+**Multi-Format Export**
+- **JSON**: Pretty-printed, UTF-8 encoded full plan for machine consumption
+- **Excel**: Three worksheets — "Business Plan" (key metrics), "Projections" (3-year table), "SWOT" (categorized lists)
+- **PDF**: Styled ReportLab document with title, metrics, SWOT summary, and projection highlights
+- All files saved to `outputs/` directory (Docker-mounted to host)
+
+**Graceful Degradation**
+- Missing `tco_data` triggers mock financial baseline; plan still generates with logged assumptions
+- All file operations wrapped in try-except; errors would append to state (add `"errors"` key to return for full compliance)
+
+#### Usage Example
+```python
+state = {
+    "tco_data": {
+        "quantity": 200,
+        "unit_material_usd": 420.0,
+        "unit_manufacturing_usd": 180.0,
+        "production_cost_usd": 117000.0,
+        "total_tco_usd": 255000.0
+    },
+    "extracted_specs": {"product_name": "Valve_DN100"},
+    "suppliers": [{"name": "SupplierA"}],
+    "errors": []
+}
+result = generate_business_plan(state)
+# result["business_plan_summary"]["npv"] → 45230.50 (example)
+# result["business_plan_summary"]["roi_3yr"] → 38.65 (%)
+# result["business_plan_paths"]["pdf"] → "outputs/business_plan.pdf"
 ```
 
 ---
