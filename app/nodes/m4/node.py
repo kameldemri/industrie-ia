@@ -1,193 +1,161 @@
 import requests
 from typing import Dict, Any, List
-from tenacity import retry, stop_after_attempt, wait_exponential
-import os
-import json
-from datetime import datetime
 
-WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
-COMTRADE_ENDPOINT = "https://comtradeapi.un.org/data/v1/get/C/A/HS"
-
-HEADERS = {"User-Agent": "industrie-ia/1.0"}
+HEADERS = {"User-Agent": "industrie-ia"}
 
 # =========================
-# MATERIAL CLEAN
+# MATERIAL → HS CODE
 # =========================
-def normalize_material(mat: str) -> str:
-    mat = mat.lower()
-
-    if "inconel" in mat:
-        return "nickel alloy"
-    if "cf8m" in mat or "cf3m" in mat:
-        return "stainless steel"
-    if "wcb" in mat:
-        return "carbon steel"
-
-    return mat.strip()
-
+HS_MAP = {
+    "carbon steel": "7208",
+    "steel": "7208",
+    "cast iron": "7201",
+    "inconel": "7502",
+    "cf3m": "7208",
+    "cf8m": "7208",
+    "wcb": "7208"
+}
 
 # =========================
 # EXTRACT MATERIALS
 # =========================
-def extract_materials(state: Dict[str, Any]) -> List[str]:
+def extract_materials(state):
     try:
-        materials = state["M1_result"]["specs"]["materials"]
-        return list(set([normalize_material(m) for m in materials]))
-    except Exception:
+        return state["M1_result"]["specs"]["materials"]
+    except:
         return []
 
-
 # =========================
-# WIKIDATA (STABLE + BIG TIMEOUT)
+# UN COMTRADE (REAL EXPORT COUNTRIES)
 # =========================
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
-def query_wikidata(material: str) -> List[Dict]:
+def get_export_data(hs_code: str):
     try:
-        r = requests.get(
-            WIKIDATA_ENDPOINT,
-            params={
-                "query": """
-                SELECT ?company ?companyLabel ?countryLabel WHERE {
-                  ?company wdt:P31 wd:Q783794 .
-                  ?company wdt:P17 ?country .
-                  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
-                } LIMIT 10
-                """,
-                "format": "json"
-            },
-            headers=HEADERS,
-            timeout=90   # 🔥 IMPORTANT FIX (plus stable)
-        )
+        url = "https://comtradeapi.un.org/data/v1/get/C/A/HS"
 
-        r.raise_for_status()
+        params = {
+            "cmdCode": hs_code,
+            "flowCode": "X",
+            "period": "2022",
+            "partnerCode": "all",
+            "reporterCode": "all"
+        }
+
+        r = requests.get(url, params=params, headers=HEADERS, timeout=30)
         data = r.json()
-
-        out = []
-        for x in data.get("results", {}).get("bindings", []):
-            out.append({
-                "name": x.get("companyLabel", {}).get("value", ""),
-                "country": x.get("countryLabel", {}).get("value", ""),
-                "material": material,
-                "source": "wikidata"
-            })
-
-        return out
-
-    except Exception as e:
-        print("WIKIDATA ERROR:", e)
-        return []   # ❗ NO FAKE DATA
-
-
-# =========================
-# COMTRADE (STABLE)
-# =========================
-HS_MAP = {
-    "stainless steel": "7219",
-    "carbon steel": "7208",
-    "cast iron": "7201",
-    "nickel alloy": "7502"
-}
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
-def query_comtrade(material: str) -> List[Dict]:
-    try:
-        hs = HS_MAP.get(material)
-        if not hs:
-            return []
-
-        r = requests.get(
-            COMTRADE_ENDPOINT,
-            params={
-                "cmdCode": hs,
-                "flowCode": "X",
-                "period": "2022",
-                "reporterCode": "all"
-            },
-            headers=HEADERS,
-            timeout=90   # 🔥 IMPORTANT FIX
-        )
-
-        r.raise_for_status()
-        data = r.json()
-
-        return [
-            {
-                "country": x.get("reporterDesc", ""),
-                "trade_value": x.get("primaryValue", 0),
-                "material": material,
-                "source": "comtrade"
-            }
-            for x in data.get("data", [])[:5]
-        ]
-
-    except Exception as e:
-        print("COMTRADE ERROR:", e)
-        return []   # ❗ NO FAKE DATA
-
-
-# =========================
-# SAVE OUTPUT FUNCTION
-# =========================
-def save_output(state: Dict[str, Any]) -> str:
-    os.makedirs("outputs", exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_path = f"outputs/M4_{timestamp}.json"
-
-    output_data = {
-        "M1_result": state.get("M1_result", {}),
-        "M4_result": state.get("M4_result", []),
-        "status": "success"
-    }
-
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=2, ensure_ascii=False)
-
-    print(f"💾 SAVED: {file_path}")
-
-    return file_path
-
-
-# =========================
-# MAIN NODE M4 (NO CRASH VERSION)
-# =========================
-def source_suppliers(state: Dict[str, Any]) -> Dict[str, Any]:
-
-    try:
-        print("🔍 M4 START")
-
-        materials = extract_materials(state)
-
-        if not materials:
-            raise ValueError("No materials extracted from M1")
 
         results = []
 
-        for m in materials:
-            print("➡ PROCESS:", m)
-
-            suppliers = query_wikidata(m)
-            trade = query_comtrade(m)
-
+        for item in data.get("data", [])[:10]:
             results.append({
-                "original_material": m,
-                "normalized_material": normalize_material(m),
-                "suppliers": suppliers,
-                "trade_data": trade
+                "country": item.get("reporterDesc"),
+                "export_value": item.get("primaryValue", 0)
             })
 
-        state["M4_result"] = results
+        return results
 
-        # 🔥 SAVE FILE AUTOMATICALLY
-        state["M4_output_file"] = save_output(state)
+    except:
+        return []
 
-        return state
+# =========================
+# OPENCORPORATES (REAL COMPANIES)
+# =========================
+def get_companies(query: str):
+    try:
+        url = "https://api.opencorporates.com/v0.4/companies/search"
 
-    except Exception as e:
-        print("❌ M4 CRITICAL ERROR:", e)
+        params = {
+            "q": query,
+            "per_page": 5
+        }
 
-        state["M4_result"] = []
-        state["M4_error"] = str(e)
-        state["M4_output_file"] = None
+        r = requests.get(url, params=params, headers=HEADERS, timeout=20)
+        data = r.json()
 
-        return state
+        results = []
+
+        for c in data.get("results", {}).get("companies", []):
+            comp = c.get("company", {})
+            results.append({
+                "name": comp.get("name"),
+                "country": comp.get("jurisdiction_code"),
+                "source": "OpenCorporates"
+            })
+
+        return results
+
+    except:
+        return []
+
+# =========================
+# ECONOMIC SCORE (REAL LOGIC)
+# =========================
+def compute_score(export_value: float):
+    # log normalization (important)
+    if not export_value:
+        return 0.5
+
+    score = export_value / 1e10
+    return round(min(10, max(0.5, score)), 2)
+
+# =========================
+# MERGE SUPPLIERS
+# =========================
+def build_suppliers(material: str, hs_code: str):
+
+    suppliers = []
+
+    # 1. export countries → "industrial power"
+    exports = get_export_data(hs_code)
+
+    for e in exports:
+        suppliers.append({
+            "type": "country_exporter",
+            "name": e["country"],
+            "country": e["country"],
+            "score": compute_score(e["export_value"]),
+            "value": e["export_value"]
+        })
+
+    # 2. real companies (industrial actors)
+    companies = get_companies(material)
+
+    for c in companies:
+        suppliers.append({
+            "type": "company",
+            "name": c["name"],
+            "country": c["country"],
+            "score": 3.0,  # base score for real company existence
+            "value": None
+        })
+
+    # sort best first
+    suppliers = sorted(suppliers, key=lambda x: x["score"], reverse=True)
+
+    return suppliers[:8]
+
+# =========================
+# MAIN NODE M4
+# =========================
+def source_suppliers(state: Dict[str, Any]):
+
+    materials = extract_materials(state)
+
+    results = []
+
+    for m in materials:
+
+        mat = m.lower().strip()
+        hs = HS_MAP.get(mat, "7208")
+
+        suppliers = build_suppliers(mat, hs)
+
+        results.append({
+            "material": m,
+            "hs_code": hs,
+            "suppliers": suppliers
+        })
+
+    state["M4_result"] = results
+    return state
+
+m4_node = source_suppliers
