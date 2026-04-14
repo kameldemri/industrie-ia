@@ -1,62 +1,47 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from app.graph import build_graph
+from app.graph import pipeline
 
-app = FastAPI()
-graph = build_graph()
+app = FastAPI(title="INDUSTRIE IA", version="1.0.0")
 
-# =========================
-# INPUT MODEL
-# =========================
-class InputData(BaseModel):
-    input_file: str | None = None
-    input_prompt: str | None = None
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# =========================
-# ENDPOINT SAFE
-# =========================
-@app.post("/trigger")
-def trigger(data: InputData):
+class TriggerRequest(BaseModel):
+    input_file: str
+    input_prompt: str = ""
 
-    # init state
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/api/v1/trigger")
+def trigger(request: TriggerRequest):
+
     state = {
-        "input_file": data.input_file,
-        "input_prompt": data.input_prompt
+        "input_file": request.input_file,
+        "input_prompt": request.input_prompt
     }
 
-    try:
-        # RUN GRAPH
-        result = graph.invoke(state)
-
-        if not isinstance(result, dict):
-            return {
-                "status": "error",
-                "message": "Invalid graph output"
+    # 🔥 IMPORTANT FIX HERE
+    result = pipeline.invoke(
+        state,
+        config={
+            "configurable": {
+                "thread_id": "demo_thread"
             }
-
-        return {
-            "M1_result": result.get("M1_result", {}),
-            "M4_result": result.get("M4_result", []),
-
-            "files": {
-                "M1": (
-                    result.get("M1_result", {}) or {}
-                ).get("output_file"),
-
-                "M4": result.get("M4_output_file")
-            },
-
-            "status": "success"
         }
+    )
 
-    except Exception as e:
-        # 🔥 IMPORTANT: NEVER RETURN 500 RAW
-        print("❌ API ERROR:", str(e))
-
-        return {
-            "status": "error",
-            "message": str(e),
-            "M1_result": {},
-            "M4_result": [],
-            "files": {}
-        }
+    return {
+        "status": "success",
+        "result": result
+    }
